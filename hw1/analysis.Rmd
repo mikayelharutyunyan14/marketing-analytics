@@ -1,0 +1,280 @@
+---
+title: 'Bass Diffusion Model: Jackery Solar Roof'
+author: "Mikayel Harutyunyan"
+date: "2026-03-05"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Importing libraries
+```{r}
+library(ggplot2)
+library(readxl)
+library(diffusion)
+```
+
+Loading the dataset
+```{r}
+data <- read_excel("data/cumulative_solar_pv.xlsx", sheet = "Data", col_names = TRUE)
+
+head(data)
+```
+
+Data preparation
+```{r}
+capacity <- data$Capacity_MW
+
+# Converting cumulative capacity to yearly adoption
+sales <- diff(capacity)
+
+# Time index
+t <- 1:length(sales)
+
+sales
+```
+
+STEP 4 - Estimating Bass Model Parameters
+
+Bass model function
+```{r}
+bass_sales <- function(t, p, q, m) {
+  m * ((p + q)^2 / p) * exp(-(p + q) * t) / (1 + (q / p) * exp(-(p + q) * t))^2
+}
+```
+
+Method 1 - Estimating Bass Parameters using nls()
+```{r}
+bass_model <- nls(
+  sales ~ bass_sales(t, p, q, m),
+  start = list(m = max(capacity) * 1.5, p = 0.001, q = 0.2),
+  control = nls.control(maxiter = 1000, minFactor = 1/2048, warnOnly = TRUE)
+)
+
+summary(bass_model)
+
+# Extracting parameters
+p_est <- coef(bass_model)["p"]
+q_est <- coef(bass_model)["q"]
+m_est <- coef(bass_model)["m"]
+
+p_est
+q_est
+m_est
+```
+
+Method 2 - Estimating Bass Parameters using diffusion library
+```{r}
+diff_m <- diffusion(sales, type = "bass")
+
+# Extracting and rounding parameters
+p_diff <- round(diff_m$w["p"], 4)
+q_diff <- round(diff_m$w["q"], 4)
+m_diff <- round(diff_m$w["m"], 0)
+
+diff_m
+plot(diff_m)
+```
+
+Dataframe for comparing the methods
+```{r}
+# fitted annual sales
+fitted_nls <- bass_sales(t, p_est, q_est, m_est)
+fitted_diff <- bass_sales(t, p_diff, q_diff, m_diff)
+
+df1 <- data.frame(
+  Year = 2000 + t,
+  Actual = sales,
+  NLS_Fit = fitted_nls,
+  DIFF_Fit = fitted_diff
+)
+```
+
+Annual Sales vs Diffusion 
+```{r}
+ggplot(df1, aes(x = Year)) +
+  geom_point(aes(y = Actual), color = "blue", size = 2) +
+  geom_line(aes(y = NLS_Fit), color = "green", linewidth = 1) +
+  geom_line(aes(y = DIFF_Fit), color = "orange", linewidth = 1) +
+  labs(title = "Annual Solar PV Adoption vs. Bass Model Fits",
+       y = "Annual Sales (MW)") +
+  theme_minimal()
+```
+
+
+STEP 5 - Predicting Diffusion Path
+
+```{r}
+bass_cum <- function(t, p, q, m) {
+  m * (1 - exp(-(p + q) * t)) / (1 + (q / p) * exp(-(p + q) * t))
+}
+```
+
+Forecast for the next 30 years using
+```{r}
+t_forecast <- 1:35
+
+# Generating predictions
+sales_pred_nls <- bass_sales(t_forecast, p_est, q_est, m_est)
+sales_pred_diff <- bass_sales(t_forecast, p_diff, q_diff, m_diff)
+
+# Prediction dataframe
+df_forecast <- data.frame(
+  Year = 2000 + t_forecast,
+  NLS_Predicted_Sales = sales_pred_nls,
+  DIFF_Predicted_Sales = sales_pred_diff
+  
+)
+```
+
+Plotting historical vs predicted diffusion
+```{r}
+ggplot() +
+  geom_point(data = data.frame(Year = 2000 + t, Actual = sales), 
+             aes(x = Year, y = Actual, color = "Historical Sales"), size = 2) +
+  geom_line(data = df_forecast, 
+            aes(x = Year, y = NLS_Predicted_Sales, color = "Bass NLS Forecast"), linewidth = 1) +
+  geom_line(data = df_forecast, 
+            aes(x = Year, y = DIFF_Predicted_Sales, color = "Bass DIFF Forecast"), linewidth = 1) +
+  scale_color_manual(values = c("Historical Sales" = "blue", "Bass NLS Forecast" = "green", 
+                                "Bass DIFF Forecast" = "orange")) +
+  labs(title = "Annual Adoption Forecast: Jackery Solar Roof",
+       subtitle = "Projection of the Imitation effect through 2035",
+       y = "Annual Sales (MW)", x = "Year") +
+  theme_minimal()
+```
+
+STEP 6 AND 7 - Using Netherlands Residential Solar PV Data
+
+Load the dataset
+```{r}
+nl_data <- read_excel("data/netherlands_pv.xlsx", sheet = "Data", col_names = TRUE)
+
+head(nl_data)
+```
+
+Prepare data for Bass model
+```{r}
+annual_sales <- diff(nl_data$PV_Systems)
+t <- 1:length(annual_sales)
+```
+
+Diffusion Method
+```{r}
+diff_m <- diffusion(annual_sales, type = "bass")
+
+# Extracting and rounding parameters
+p_diff <- round(diff_m$w["p"], 4)
+q_diff <- round(diff_m$w["q"], 4)
+m_diff <- round(diff_m$w["m"], 0)
+
+diff_m
+plot(diff_m)
+```
+Estimate Bass parameters using nls()
+```{r}
+bass_model <- nls(
+  annual_sales ~ bass_sales(t, p, q, m),
+  start = list(m = max(nl_data$PV_Systems) * 1.5, p = 0.01, q = 0.3),
+  control = nls.control(maxiter = 1000, minFactor = 1/2048, warnOnly = TRUE)
+)
+
+summary(bass_model)
+
+# Extracting estimated parameters
+p_est <- coef(bass_model)["p"]
+q_est <- coef(bass_model)["q"]
+m_est <- coef(bass_model)["m"]
+
+p_est
+q_est
+m_est
+```
+
+
+Forecasting future adoption (2019-2030)
+```{r}
+t_future <- 1:12
+cum_pred <- bass_cum(t_future, p_est, q_est, m_est)
+annual_pred <- c(cum_pred[1], diff(cum_pred))
+```
+
+Dataframe for plotting
+```{r}
+df_pred <- data.frame(
+  Year = 2019 + t_future - 1,
+  Predicted_Annual = annual_pred,
+  Predicted_Cumulative = cum_pred
+)
+```
+
+Add historical data for comparison
+```{r}
+df_hist <- data.frame(
+  Year = nl_data$Year[-1], # removing first year since diff() reduces length
+  Actual_Annual = annual_sales,
+  Actual_Cumulative = nl_data$PV_Systems[-1]
+)
+```
+
+Plotting annual adoption: historical vs predicted
+```{r}
+ggplot() +
+  geom_point(data = df_hist, aes(x = Year, y = Actual_Annual), color = "blue", size = 2) +
+  geom_line(data = df_pred, aes(x = Year, y = Predicted_Annual), color = "green", linewidth = 1.2) +
+  labs(title = "Annual Residential Solar PV Adoption in the Netherlands",
+       y = "Annual PV Systems Installed",
+       x = "Year") +
+  theme_minimal()
+```
+
+Plotting cumulative adoption: historical vs predicted
+```{r}
+ggplot() +
+  geom_point(data = df_hist, aes(x = Year, y = Actual_Cumulative), color = "blue", size = 2) +
+  geom_line(data = df_pred, aes(x = Year, y = Predicted_Cumulative), color = "green", linewidth = 1.2) +
+  labs(title = "Cumulative Residential Solar PV Adoption in the Netherlands",
+       y = "Cumulative PV Systems",
+       x = "Year") +
+  theme_minimal()
+```
+
+Computing the time of peak adoption
+```{r}
+t_peak <- log(q_est / p_est) / (p_est + q_est)
+peak_year <- 2019 + t_peak - 1
+peak_year
+```
+
+
+FERMI LOGIC
+
+Estimating number of adopters by period using Fermi calculation (m = 3.27 million)
+```{r}
+m_fermi <- 3272000
+
+cum_pred_fermi <- bass_cum(t_future, p_est, q_est, m_fermi)
+annual_pred_fermi <- c(cum_pred_fermi[1], diff(cum_pred_fermi))
+
+df_pred_fermi <- data.frame(
+  Year = 2019 + t_future - 1,
+  Predicted_Annual = annual_pred_fermi,
+  Predicted_Cumulative = cum_pred_fermi
+)
+```
+
+Plotting cumulative adoption: historical vs predicted
+```{r}
+ggplot() +
+  geom_point(data = df_hist, aes(x = Year, y = Actual_Cumulative), color = "blue", size = 2) +
+  geom_line(data = df_pred_fermi, aes(x = Year, y = Predicted_Cumulative), color = "black", linewidth = 1.2) +
+  labs(title = "Fermi Cumulative Residential Solar PV Adoption in the Netherlands",
+       y = "Cumulative PV Systems",
+       x = "Year") +
+  theme_minimal()
+```
